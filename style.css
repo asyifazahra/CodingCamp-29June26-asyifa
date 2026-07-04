@@ -1,0 +1,366 @@
+/* =============================================================
+   Reset & Base
+   ============================================================= */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: 16px;
+  /* Prevent horizontal overflow at any viewport width */
+  overflow-x: hidden;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background-color: #f0f2f5;
+  color: #1a1a2e;
+  min-height: 100vh;
+  line-height: 1.5;
+  /* Guard against content wider than viewport */
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+/* =============================================================
+   Visually Hidden (accessible utility)
+   ============================================================= */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* =============================================================
+   Dashboard Grid Layout
+   Responsive: 1 column at narrow widths → up to 2×2 on wide screens
+   ============================================================= */
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+  padding: 1rem;
+  width: 100%;
+  /* Prevent grid from ever exceeding the viewport */
+  max-width: 2560px;
+  margin: 0 auto;
+}
+
+/* 2-column layout from 640px upward */
+@media (min-width: 640px) {
+  .dashboard-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* Wider padding on large screens */
+@media (min-width: 1200px) {
+  .dashboard-grid {
+    padding: 2rem;
+    gap: 1.5rem;
+  }
+}
+
+/* =============================================================
+   Widget Base
+   ============================================================= */
+.widget {
+  background-color: #ffffff;
+  border-radius: 12px;
+  padding: 1.25rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  /* Prevent any widget from overflowing its column */
+  min-width: 0;
+  overflow: hidden;
+}
+
+.widget-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+  color: #1a1a2e;
+}
+
+/* =============================================================
+   Greeting Widget
+   ============================================================= */
+.greeting-message {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #3a86ff;
+  margin-bottom: 0.25rem;
+}
+
+.clock-time {
+  font-size: 2.5rem;
+  font-weight: 300;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.1rem;
+  /* Prevent long clock strings from overflowing */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clock-date {
+  font-size: 0.95rem;
+  color: #555;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* =============================================================
+   Focus Timer
+   ============================================================= */
+.timer-display {
+  font-size: 3rem;
+  font-weight: 300;
+  letter-spacing: 0.1em;
+  text-align: center;
+  margin: 0.5rem 0 1rem;
+  color: #1a1a2e;
+}
+
+.timer-controls {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-bottom: 0.75rem;
+}
+
+.timer-controls button {
+  flex: 1 1 auto;
+  min-width: 70px;
+}
+
+.timer-alert {
+  display: none;
+  background-color: #fff3cd;
+  color: #856404;
+  border: 1px solid #ffc107;
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  text-align: center;
+  font-weight: 500;
+  margin-top: 0.5rem;
+}
+
+.timer-alert.visible {
+  display: block;
+}
+
+/* =============================================================
+   Task Manager
+   ============================================================= */
+.task-add-form {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.25rem;
+}
+
+.task-input {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.task-list {
+  list-style: none;
+  margin-top: 0.75rem;
+}
+
+.task-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid #f0f0f0;
+  flex-wrap: wrap;
+}
+
+.task-item:last-child {
+  border-bottom: none;
+}
+
+.task-toggle {
+  flex-shrink: 0;
+  width: 1rem;
+  height: 1rem;
+  cursor: pointer;
+  accent-color: #3a86ff;
+}
+
+.task-description {
+  flex: 1 1 0;
+  min-width: 0;
+  word-break: break-word;
+}
+
+/* Completed task strikethrough — Requirement 5.1, 5.2 */
+.task-item.completed .task-description {
+  text-decoration: line-through;
+  color: #999;
+}
+
+.task-edit-input {
+  flex: 1 1 150px;
+  min-width: 0;
+}
+
+/* =============================================================
+   Quick Links Panel
+   ============================================================= */
+.ql-add-form {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.4rem 0.5rem;
+  align-items: center;
+  margin-bottom: 0.25rem;
+}
+
+.ql-add-form button {
+  grid-column: 1 / -1;
+  justify-self: start;
+  margin-top: 0.25rem;
+}
+
+.ql-input {
+  min-width: 0;
+  width: 100%;
+}
+
+.ql-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.ql-item {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.ql-btn {
+  display: inline-block;
+  background-color: #3a86ff;
+  color: #ffffff;
+  text-decoration: none;
+  padding: 0.3rem 0.6rem;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  word-break: break-word;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* Contrast: white on #3a86ff is AA compliant */
+}
+
+.ql-btn:hover,
+.ql-btn:focus {
+  background-color: #2563eb;
+  outline: 2px solid #1d4ed8;
+  outline-offset: 2px;
+}
+
+.ql-delete-btn {
+  background: none;
+  border: none;
+  color: #cc0000;
+  font-size: 1rem;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+}
+
+.ql-delete-btn:hover,
+.ql-delete-btn:focus {
+  background-color: #fde8e8;
+  outline: 2px solid #cc0000;
+  outline-offset: 1px;
+}
+
+/* =============================================================
+   Shared form controls
+   ============================================================= */
+input[type="text"],
+input[type="url"] {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  color: #1a1a2e;
+  background-color: #fff;
+  width: 100%;
+  /* Never exceed container */
+  max-width: 100%;
+}
+
+input[type="text"]:focus,
+input[type="url"]:focus {
+  outline: 2px solid #3a86ff;
+  outline-offset: 1px;
+  border-color: #3a86ff;
+}
+
+button {
+  padding: 0.4rem 0.9rem;
+  background-color: #3a86ff;
+  color: #ffffff;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  cursor: pointer;
+  /* Contrast: white text on #3a86ff is WCAG AA compliant */
+}
+
+button:hover:not(:disabled),
+button:focus:not(:disabled) {
+  background-color: #2563eb;
+  outline: 2px solid #1d4ed8;
+  outline-offset: 2px;
+}
+
+button:disabled {
+  background-color: #a0aec0;
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+/* =============================================================
+   Validation / error messages
+   ============================================================= */
+.validation-msg {
+  display: block;
+  font-size: 0.85rem;
+  color: #cc0000;
+  min-height: 1.1em;
+  margin-bottom: 0.25rem;
+}
+
+/* =============================================================
+   Warning banner (localStorage unavailable)
+   ============================================================= */
+.storage-warning-banner {
+  background-color: #fff3cd;
+  color: #856404;
+  border: 1px solid #ffc107;
+  border-radius: 6px;
+  padding: 0.65rem 1rem;
+  margin: 0.75rem 1rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
