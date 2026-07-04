@@ -359,7 +359,8 @@ button:disabled {
   color: #856404;
   border: 1px solid #ffc107;
   border-radius: 6px;
-  padding: 0.5rem 0.75rem;
-  margin-bottom: 0.75rem;
+  padding: 0.65rem 1rem;
+  margin: 0.75rem 1rem;
   font-size: 0.9rem;
+  font-weight: 500;
 }

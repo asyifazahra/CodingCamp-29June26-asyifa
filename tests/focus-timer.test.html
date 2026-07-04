@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PBT — Focus Timer Properties</title>
+  <style>
+    body { font-family: monospace; padding: 2rem; background: #0d0d0d; color: #e0e0e0; }
+    h1 { color: #7ec8e3; margin-bottom: 0.5rem; }
+    .suite { margin-top: 1.5rem; }
+    .suite h2 { color: #a8d8a8; font-size: 1rem; margin-bottom: 0.5rem; border-bottom: 1px solid #333; padding-bottom: 0.25rem; }
+    .result { padding: 0.5rem 0.75rem; border-radius: 4px; margin: 0.25rem 0; font-size: 0.875rem; }
+    .pass { background: #1a3a1a; color: #6dbf6d; border-left: 3px solid #4caf50; }
+    .fail { background: #3a1a1a; color: #e07070; border-left: 3px solid #f44336; }
+    .info { background: #1a1a2e; color: #8888cc; border-left: 3px solid #555599; }
+    #summary { margin-top: 2rem; padding: 1rem; border-radius: 6px; font-size: 1rem; }
+    .all-pass { background: #1a3a1a; border: 1px solid #4caf50; color: #88dd88; }
+    .has-fail  { background: #3a1a1a; border: 1px solid #f44336; color: #ee8888; }
+    pre { white-space: pre-wrap; word-break: break-all; margin: 0.25rem 0 0; font-size: 0.8rem; }
+  </style>
+</head>
+<body>
+  <h1>Property-Based Tests — Focus Timer</h1>
+  <p class="info result">Loading fast-check from CDN&hellip;</p>
+
+  <div id="output"></div>
+  <div id="summary"></div>
+
+  <!--
+    Minimal DOM stubs required by renderTimerDisplay() and initFocusTimer().
+    Hidden from view but present in the document so getElementById calls succeed.
+  -->
+  <div style="display:none">
+    <span id="timer-display"></span>
+    <button id="timer-start"></button>
+    <button id="timer-stop"></button>
+    <button id="timer-reset"></button>
+    <div id="timer-alert" role="alert"></div>
+  </div>
+
+  <script type="module">
+    // ── Import fast-check from CDN ───────────────────────────────────────────
+    import * as fc from 'https://cdn.jsdelivr.net/npm/fast-check/+esm';
+
+    // ── Inline copies of the functions under test ────────────────────────────
+    // These mirror the implementations in js/app.js exactly so the tests run
+    // in a module <script> without needing to import the IIFE-wrapped app file.
+
+    // timerState is module-scoped here (mirrors the IIFE-scoped var in app.js)
+    var timerState = {
+      remainingSeconds: 1500,
+      intervalId: null
+    };
+
+    function formatTimerDisplay(seconds) {
+      var mm = String(Math.floor(seconds / 60)).padStart(2, '0');
+      var ss = String(seconds % 60).padStart(2, '0');
+      return mm + ':' + ss;
+    }
+
+    function renderTimerDisplay() {
+      document.getElementById('timer-display').textContent =
+        formatTimerDisplay(timerState.remainingSeconds);
+    }
+
+    function startTimer() {
+      timerState.intervalId = setInterval(tickTimer, 1000);
+      document.getElementById('timer-start').disabled = true;
+      document.getElementById('timer-stop').disabled  = false;
+    }
+
+    function stopTimer() {
+      clearInterval(timerState.intervalId);
+      timerState.intervalId = null;
+      document.getElementById('timer-start').disabled = false;
+      document.getElementById('timer-stop').disabled  = true;
+    }
+
+    function tickTimer() {
+      timerState.remainingSeconds -= 1;
+      renderTimerDisplay();
+      if (timerState.remainingSeconds === 0) {
+        stopTimer();
+        document.getElementById('timer-alert').classList.add('visible');
+      }
+    }
+
+    function resetTimer() {
+      stopTimer();
+      timerState.remainingSeconds = 1500;
+      document.getElementById('timer-alert').classList.remove('visible');
+      renderTimerDisplay();
+    }
+
+    function initFocusTimer() {
+      timerState.remainingSeconds = 1500;
+      renderTimerDisplay();
+      document.getElementById('timer-start').disabled = false;
+      document.getElementById('timer-stop').disabled  = true;
+      document.getElementById('timer-alert').classList.remove('visible');
+    }
+
+    // ── Test harness helpers ─────────────────────────────────────────────────
+    const output  = document.getElementById('output');
+    const summary = document.getElementById('summary');
+    let passed = 0;
+    let failed = 0;
+
+    function log(html) {
+      const div = document.createElement('div');
+      div.innerHTML = html;
+      output.appendChild(div);
+    }
+
+    function section(title) {
+      log(`<div class="suite"><h2>${title}</h2></div>`);
+    }
+
+    function reportPass(label) {
+      passed++;
+      log(`<div class="result pass">✓ ${label}</div>`);
+    }
+
+    function reportFail(label, detail) {
+      failed++;
+      log(`<div class="result fail">✗ ${label}<pre>${detail}</pre></div>`);
+    }
+
+    async function runProperty(label, prop, options = {}) {
+      try {
+        await fc.assert(prop, { numRuns: 100, ...options });
+        reportPass(label);
+      } catch (err) {
+        reportFail(label, String(err));
+      }
+    }
+
+    // ── Unit tests (boundary examples) ──────────────────────────────────────
+    section('Unit tests — formatTimerDisplay boundary examples');
+
+    const timerDisplayCases = [
+      [0,    '00:00'],
+      [1,    '00:01'],
+      [59,   '00:59'],
+      [60,   '01:00'],
+      [65,   '01:05'],
+      [599,  '09:59'],
+      [600,  '10:00'],
+      [1499, '24:59'],
+      [1500, '25:00'],
+    ];
+
+    for (const [secs, expected] of timerDisplayCases) {
+      const actual = formatTimerDisplay(secs);
+      if (actual === expected) {
+        reportPass(`formatTimerDisplay(${secs}) === "${expected}"`);
+      } else {
+        reportFail(`formatTimerDisplay(${secs})`, `Expected "${expected}", got "${actual}"`);
+      }
+    }
+
+    section('Unit tests — initFocusTimer initial state');
+
+    initFocusTimer();
+    const displayEl = document.getElementById('timer-display');
+    const startBtn  = document.getElementById('timer-start');
+    const stopBtn   = document.getElementById('timer-stop');
+    const alertEl   = document.getElementById('timer-alert');
+
+    if (timerState.remainingSeconds === 1500) {
+      reportPass('timerState.remainingSeconds initialised to 1500');
+    } else {
+      reportFail('timerState.remainingSeconds', `Expected 1500, got ${timerState.remainingSeconds}`);
+    }
+
+    if (displayEl.textContent === '25:00') {
+      reportPass('#timer-display shows "25:00" after initFocusTimer()');
+    } else {
+      reportFail('#timer-display value', `Expected "25:00", got "${displayEl.textContent}"`);
+    }
+
+    if (!startBtn.disabled) {
+      reportPass('#timer-start is enabled after initFocusTimer()');
+    } else {
+      reportFail('#timer-start enabled', 'Expected Start button to be enabled, but it was disabled');
+    }
+
+    if (stopBtn.disabled) {
+      reportPass('#timer-stop is disabled after initFocusTimer()');
+    } else {
+      reportFail('#timer-stop disabled', 'Expected Stop button to be disabled, but it was enabled');
+    }
+
+    if (!alertEl.classList.contains('visible')) {
+      reportPass('#timer-alert is hidden after initFocusTimer()');
+    } else {
+      reportFail('#timer-alert hidden', 'Expected timer-alert to NOT have class "visible" after initFocusTimer()');
+    }
+
+    section('Unit tests — resetTimer restores 25:00');
+
+    // Set an arbitrary mid-countdown state, then reset
+    timerState.remainingSeconds = 300; // 5 minutes remaining
+    resetTimer();
+
+    if (timerState.remainingSeconds === 1500) {
+      reportPass('resetTimer() restores remainingSeconds to 1500 from 300');
+    } else {
+      reportFail('resetTimer() from 300', `Expected 1500, got ${timerState.remainingSeconds}`);
+    }
+
+    if (displayEl.textContent === '25:00') {
+      reportPass('resetTimer() updates #timer-display to "25:00"');
+    } else {
+      reportFail('resetTimer() display', `Expected "25:00", got "${displayEl.textContent}"`);
+    }
+
+    section('Unit tests — startTimer / stopTimer button state');
+
+    // Reset to a known clean state before testing start/stop
+    timerState.remainingSeconds = 1500;
+    timerState.intervalId = null;
+    document.getElementById('timer-start').disabled = false;
+    document.getElementById('timer-stop').disabled  = true;
+
+    startTimer();
+
+    if (document.getElementById('timer-start').disabled === true) {
+      reportPass('startTimer() disables #timer-start');
+    } else {
+      reportFail('startTimer() disables #timer-start', 'Expected disabled=true after startTimer()');
+    }
+
+    if (document.getElementById('timer-stop').disabled === false) {
+      reportPass('startTimer() enables #timer-stop');
+    } else {
+      reportFail('startTimer() enables #timer-stop', 'Expected disabled=false after startTimer()');
+    }
+
+    if (timerState.intervalId !== null) {
+      reportPass('startTimer() sets a non-null intervalId');
+    } else {
+      reportFail('startTimer() sets intervalId', 'Expected non-null intervalId after startTimer()');
+    }
+
+    stopTimer();
+
+    if (document.getElementById('timer-start').disabled === false) {
+      reportPass('stopTimer() re-enables #timer-start');
+    } else {
+      reportFail('stopTimer() re-enables #timer-start', 'Expected disabled=false after stopTimer()');
+    }
+
+    if (document.getElementById('timer-stop').disabled === true) {
+      reportPass('stopTimer() disables #timer-stop');
+    } else {
+      reportFail('stopTimer() disables #timer-stop', 'Expected disabled=true after stopTimer()');
+    }
+
+    if (timerState.intervalId === null) {
+      reportPass('stopTimer() sets intervalId to null');
+    } else {
+      reportFail('stopTimer() sets intervalId to null', 'Expected null after stopTimer()');
+    }
+
+    section('Unit tests — tickTimer countdown and alert');
+
+    // tickTimer decrements remainingSeconds and updates display
+    timerState.remainingSeconds = 10;
+    timerState.intervalId = null;
+    document.getElementById('timer-alert').classList.remove('visible');
+    tickTimer();
+
+    if (timerState.remainingSeconds === 9) {
+      reportPass('tickTimer() decrements remainingSeconds by 1');
+    } else {
+      reportFail('tickTimer() decrement', `Expected 9, got ${timerState.remainingSeconds}`);
+    }
+
+    if (document.getElementById('timer-display').textContent === '00:09') {
+      reportPass('tickTimer() updates #timer-display correctly');
+    } else {
+      reportFail('tickTimer() display update', `Expected "00:09", got "${document.getElementById('timer-display').textContent}"`);
+    }
+
+    // tickTimer at 1 → goes to 0, triggers stopTimer and shows alert
+    timerState.remainingSeconds = 1;
+    timerState.intervalId = null;
+    document.getElementById('timer-start').disabled = true;
+    document.getElementById('timer-stop').disabled  = false;
+    document.getElementById('timer-alert').classList.remove('visible');
+    tickTimer();
+
+    if (timerState.remainingSeconds === 0) {
+      reportPass('tickTimer() reaches 0 when called with remainingSeconds === 1');
+    } else {
+      reportFail('tickTimer() reaches 0', `Expected 0, got ${timerState.remainingSeconds}`);
+    }
+
+    if (document.getElementById('timer-display').textContent === '00:00') {
+      reportPass('tickTimer() shows "00:00" when countdown completes');
+    } else {
+      reportFail('tickTimer() shows 00:00', `Expected "00:00", got "${document.getElementById('timer-display').textContent}"`);
+    }
+
+    if (timerState.intervalId === null) {
+      reportPass('tickTimer() calls stopTimer() when remainingSeconds reaches 0 (intervalId null)');
+    } else {
+      reportFail('tickTimer() stops interval at 0', 'Expected intervalId to be null');
+    }
+
+    if (document.getElementById('timer-alert').classList.contains('visible')) {
+      reportPass('tickTimer() shows #timer-alert when countdown completes');
+    } else {
+      reportFail('tickTimer() shows alert', 'Expected #timer-alert to have class "visible" when countdown completes');
+    }
+
+    if (document.getElementById('timer-start').disabled === false) {
+      reportPass('tickTimer() re-enables #timer-start via stopTimer() at countdown end');
+    } else {
+      reportFail('tickTimer() re-enables start', 'Expected #timer-start to be enabled after countdown');
+    }
+
+    // ── Property-based tests ─────────────────────────────────────────────────
+
+    section('Property 3 — Timer display format round-trip');
+    // Feature: todo-list-life-dashboard, Property 3: Timer display format round-trip
+    // Validates: Requirements 2.3, 2.5
+
+    const TIMER_PATTERN = /^\d{2}:\d{2}$/;
+
+    await runProperty(
+      'formatTimerDisplay always matches /^\\d{2}:\\d{2}$/ for seconds in [0, 1500]',
+      fc.property(
+        fc.integer({ min: 0, max: 1500 }),
+        (seconds) => TIMER_PATTERN.test(formatTimerDisplay(seconds))
+      )
+    );
+
+    await runProperty(
+      'Parsed MM*60 + SS equals original seconds for all values in [0, 1500]',
+      fc.property(
+        fc.integer({ min: 0, max: 1500 }),
+        (seconds) => {
+          const result = formatTimerDisplay(seconds);
+          const parts  = result.split(':');
+          const reconstructed = parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
+          return reconstructed === seconds;
+        }
+      )
+    );
+
+    await runProperty(
+      'MM part is always zero-padded to length 2',
+      fc.property(
+        fc.integer({ min: 0, max: 1500 }),
+        (seconds) => formatTimerDisplay(seconds).split(':')[0].length === 2
+      )
+    );
+
+    await runProperty(
+      'SS part is always zero-padded to length 2',
+      fc.property(
+        fc.integer({ min: 0, max: 1500 }),
+        (seconds) => formatTimerDisplay(seconds).split(':')[1].length === 2
+      )
+    );
+
+    section('Property 4 — Reset from any state always restores 25:00');
+    // Feature: todo-list-life-dashboard, Property 4: Reset from any state always restores 25:00
+    // Validates: Requirements 2.5
+
+    await runProperty(
+      'resetTimer() always sets remainingSeconds to 1500 for any starting value in [0, 1500]',
+      fc.property(
+        fc.integer({ min: 0, max: 1500 }),
+        (startSeconds) => {
+          timerState.remainingSeconds = startSeconds;
+          timerState.intervalId = null; // ensure no live interval
+          resetTimer();
+          return timerState.remainingSeconds === 1500;
+        }
+      )
+    );
+
+    await runProperty(
+      'resetTimer() always causes formatTimerDisplay to produce "25:00" regardless of start',
+      fc.property(
+        fc.integer({ min: 0, max: 1500 }),
+        (startSeconds) => {
+          timerState.remainingSeconds = startSeconds;
+          timerState.intervalId = null;
+          resetTimer();
+          return formatTimerDisplay(timerState.remainingSeconds) === '25:00';
+        }
+      )
+    );
+
+    await runProperty(
+      'resetTimer() always updates #timer-display to "25:00" for any starting value',
+      fc.property(
+        fc.integer({ min: 0, max: 1500 }),
+        (startSeconds) => {
+          timerState.remainingSeconds = startSeconds;
+          timerState.intervalId = null;
+          resetTimer();
+          return document.getElementById('timer-display').textContent === '25:00';
+        }
+      )
+    );
+
+    // ── Summary ──────────────────────────────────────────────────────────────
+    const total = passed + failed;
+    const cls   = failed === 0 ? 'all-pass' : 'has-fail';
+    const icon  = failed === 0 ? '✓' : '✗';
+    summary.innerHTML = `
+      <div id="summary" class="${cls}">
+        ${icon} ${passed} / ${total} tests passed
+        ${failed > 0 ? `<br><strong>${failed} test(s) failed — see details above.</strong>` : ''}
+      </div>`;
+
+    // Surface result for automated runners
+    console.log(`[PBT] ${passed}/${total} passed, ${failed} failed`);
+    if (failed > 0) {
+      console.error('[PBT] Some property tests FAILED — see output above.');
+    }
+  </script>
+</body>
+</html>

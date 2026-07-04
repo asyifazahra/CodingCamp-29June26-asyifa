@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tests — Task Interactions (toggle, edit, delete)</title>
+  <style>
+    body { font-family: monospace; padding: 2rem; background: #0d0d0d; color: #e0e0e0; }
+    h1 { color: #7ec8e3; margin-bottom: 0.5rem; }
+    .suite { margin-top: 1.5rem; }
+    .suite h2 { color: #a8d8a8; font-size: 1rem; margin-bottom: 0.5rem; border-bottom: 1px solid #333; padding-bottom: 0.25rem; }
+    .result { padding: 0.5rem 0.75rem; border-radius: 4px; margin: 0.25rem 0; font-size: 0.875rem; }
+    .pass { background: #1a3a1a; color: #6dbf6d; border-left: 3px solid #4caf50; }
+    .fail { background: #3a1a1a; color: #e07070; border-left: 3px solid #f44336; }
+    .info { background: #1a1a2e; color: #8888cc; border-left: 3px solid #555599; }
+    #summary { margin-top: 2rem; padding: 1rem; border-radius: 6px; font-size: 1rem; }
+    .all-pass { background: #1a3a1a; border: 1px solid #4caf50; color: #88dd88; }
+    .has-fail  { background: #3a1a1a; border: 1px solid #f44336; color: #ee8888; }
+    pre { white-space: pre-wrap; word-break: break-all; margin: 0.25rem 0 0; font-size: 0.8rem; }
+    /* Hidden DOM staging area */
+    #dom-fixture { display: none; }
+  </style>
+</head>
+<body>
+  <h1>Unit &amp; Property Tests — Task Interactions</h1>
+  <p class="info result">Loading fast-check from CDN&hellip;</p>
+
+  <!-- Minimal DOM that mirrors app.js requirements -->
+  <div id="dom-fixture">
+    <ul id="task-list"></ul>
+    <span id="task-validation-msg"></span>
+    <input id="task-input" type="text" />
+  </div>
+
+  <div id="output"></div>
+  <div id="summary"></div>
+
+  <script type="module">
+    import * as fc from 'https://cdn.jsdelivr.net/npm/fast-check/+esm';
+
+    // ── Inline implementations (mirrors js/app.js exactly) ──────────────────
+
+    const TASKS_KEY = 'dashboard_tasks';
+
+    function storageRead(key) {
+      try { return localStorage.getItem(key); } catch (e) { return null; }
+    }
+    function storageWrite(key, value) {
+      try { localStorage.setItem(key, value); return true; } catch (e) { return false; }
+    }
+    function generateId() {
+      if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+      }
+      return Date.now().toString(36) + Math.random().toString(36).slice(2);
+    }
+
+    // Module-scoped tasks array (reassignable, mirrors the IIFE variable)
+    let tasks = [];
+
+    function loadTasks() {
+      var raw = storageRead(TASKS_KEY);
+      if (raw === null) return [];
+      try {
+        var parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch (e) {
+        return [];
+      }
+    }
+
+    function saveTasks(t) {
+      var ok = storageWrite(TASKS_KEY, JSON.stringify(t));
+      if (!ok) {
+        var msg = document.getElementById('task-validation-msg');
+        if (msg) msg.textContent = 'Error: could not save tasks.';
+      }
+    }
+
+    function renderTaskList(t) {
+      var list = document.getElementById('task-list');
+      if (!list) return;
+      list.innerHTML = '';
+      t.forEach(function (task) {
+        var li = document.createElement('li');
+        li.setAttribute('data-id', task.id);
+        li.className = 'task-item' + (task.completed ? ' completed' : '');
+
+        var checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'task-toggle';
+        checkbox.checked = task.completed;
+        checkbox.setAttribute('aria-label', 'Mark task complete');
+
+        var span = document.createElement('span');
+        span.className = 'task-description';
+        span.textContent = task.description;
+
+        var editBtn = document.createElement('button');
+        editBtn.className = 'task-edit-btn';
+        editBtn.textContent = 'Edit';
+
+        var deleteBtn = document.createElement('button');
+        deleteBtn.className = 'task-delete-btn';
+        deleteBtn.textContent = 'Delete';
+
+        li.appendChild(checkbox);
+        li.appendChild(span);
+        li.appendChild(editBtn);
+        li.appendChild(deleteBtn);
+        list.appendChild(li);
+      });
+    }
+
+    function toggleTask(id) {
+      var task = tasks.find(function (t) { return t.id === id; });
+      if (!task) return;
+      task.completed = !task.completed;
+      saveTasks(tasks);
+      renderTaskList(tasks);
+    }
+
+    function enterEditMode(id) {
+      var list = document.getElementById('task-list');
+      if (!list) return;
+      if (list.querySelector('.task-item.editing')) return;
+      var li = list.querySelector('.task-item[data-id="' + id + '"]');
+      if (!li) return;
+      var task = tasks.find(function (t) { return t.id === id; });
+      if (!task) return;
+      li.classList.add('editing');
+      var editInput = document.createElement('input');
+      editInput.type = 'text';
+      editInput.className = 'task-edit-input';
+      editInput.maxLength = 500;
+      editInput.value = task.description;
+      var saveBtn = document.createElement('button');
+      saveBtn.className = 'task-save-btn';
+      saveBtn.textContent = 'Save';
+      var cancelBtn = document.createElement('button');
+      cancelBtn.className = 'task-cancel-btn';
+      cancelBtn.textContent = 'Cancel';
+      li.innerHTML = '';
+      li.appendChild(editInput);
+      li.appendChild(saveBtn);
+      li.appendChild(cancelBtn);
+      editInput.focus();
+    }
+
+    function saveEdit(id, newValue) {
+      if (newValue.trim().length === 0) {
+        cancelEdit(id);
+        return;
+      }
+      var task = tasks.find(function (t) { return t.id === id; });
+      if (!task) return;
+      task.description = newValue.trim();
+      saveTasks(tasks);
+      renderTaskList(tasks);
+    }
+
+    function cancelEdit(id) {
+      renderTaskList(tasks);
+    }
+
+    function deleteTask(id) {
+      tasks = tasks.filter(function (t) { return t.id !== id; });
+      saveTasks(tasks);
+      renderTaskList(tasks);
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    function makeTask(id, description, completed) {
+      return { id, description, completed };
+    }
+
+    function resetState(taskArray) {
+      tasks = taskArray.map(t => ({ ...t }));
+      localStorage.removeItem(TASKS_KEY);
+      renderTaskList(tasks);
+    }
+
+    // ── Test harness ─────────────────────────────────────────────────────────
+
+    const output  = document.getElementById('output');
+    const summary = document.getElementById('summary');
+    let passed = 0;
+    let failed = 0;
+
+    function log(html) {
+      const div = document.createElement('div');
+      div.innerHTML = html;
+      output.appendChild(div);
+    }
+    function section(title) {
+      log(`<div class="suite"><h2>${title}</h2></div>`);
+    }
+    function reportPass(label) {
+      passed++;
+      log(`<div class="result pass">✓ ${label}</div>`);
+    }
+    function reportFail(label, detail) {
+      failed++;
+      log(`<div class="result fail">✗ ${label}<pre>${detail}</pre></div>`);
+    }
+    function assert(condition, label, detail) {
+      condition ? reportPass(label) : reportFail(label, detail || 'assertion failed');
+    }
+    async function runProperty(label, prop, options = {}) {
+      try {
+        await fc.assert(prop, { numRuns: 100, ...options });
+        reportPass(label);
+      } catch (err) {
+        reportFail(label, String(err));
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // UNIT TESTS
+    // ════════════════════════════════════════════════════════════════════════
+
+    // ── toggleTask ───────────────────────────────────────────────────────────
+    section('Unit tests — toggleTask (Requirements 4.1, 5.1, 5.2)');
+
+    {
+      // pending → completed
+      resetState([makeTask('t1', 'Buy milk', false)]);
+      toggleTask('t1');
+      assert(tasks[0].completed === true, 'toggleTask flips false → true');
+    }
+    {
+      // completed → pending
+      resetState([makeTask('t1', 'Buy milk', true)]);
+      toggleTask('t1');
+      assert(tasks[0].completed === false, 'toggleTask flips true → false');
+    }
+    {
+      // persists to localStorage
+      resetState([makeTask('t1', 'Buy milk', false)]);
+      toggleTask('t1');
+      const loaded = loadTasks();
+      assert(loaded[0].completed === true, 'toggleTask persists updated state to localStorage');
+    }
+    {
+      // DOM reflects the change
+      resetState([makeTask('t1', 'Buy milk', false)]);
+      toggleTask('t1');
+      const li = document.querySelector('#task-list .task-item[data-id="t1"]');
+      assert(li && li.classList.contains('completed'), 'toggleTask re-renders DOM with completed class');
+      const cb = li && li.querySelector('.task-toggle');
+      assert(cb && cb.checked === true, 'toggleTask sets checkbox checked state in DOM');
+    }
+    {
+      // unknown id is a no-op
+      resetState([makeTask('t1', 'Buy milk', false)]);
+      toggleTask('nonexistent');
+      assert(tasks.length === 1 && tasks[0].completed === false, 'toggleTask is no-op for unknown id');
+    }
+    {
+      // does not affect other tasks
+      resetState([makeTask('t1', 'Task A', false), makeTask('t2', 'Task B', false)]);
+      toggleTask('t1');
+      assert(tasks[1].completed === false, 'toggleTask only affects the target task');
+    }
+
+    // ── enterEditMode ────────────────────────────────────────────────────────
+    section('Unit tests — enterEditMode (Requirements 4.2, 4.3, 4.4)');
+
+    {
+      // replaces inner HTML with edit controls
+      resetState([makeTask('e1', 'Edit me', false)]);
+      enterEditMode('e1');
+      const li = document.querySelector('#task-list .task-item[data-id="e1"]');
+      assert(li && li.classList.contains('editing'), 'enterEditMode adds "editing" class to <li>');
+      assert(!!li.querySelector('.task-edit-input'), 'enterEditMode injects .task-edit-input element');
+      assert(!!li.querySelector('.task-save-btn'), 'enterEditMode injects .task-save-btn button');
+      assert(!!li.querySelector('.task-cancel-btn'), 'enterEditMode injects .task-cancel-btn button');
+    }
+    {
+      // pre-fills input with current description
+      resetState([makeTask('e1', 'Pre-filled text', false)]);
+      enterEditMode('e1');
+      const input = document.querySelector('#task-list .task-edit-input');
+      assert(input && input.value === 'Pre-filled text', 'enterEditMode pre-fills edit input with current description');
+    }
+    {
+      // maxLength is 500
+      resetState([makeTask('e1', 'Hello', false)]);
+      enterEditMode('e1');
+      const input = document.querySelector('#task-list .task-edit-input');
+      assert(input && input.maxLength === 500, 'enterEditMode sets maxLength=500 on edit input');
+    }
+    {
+      // one-at-a-time guard: second call while editing is a no-op
+      resetState([makeTask('e1', 'First', false), makeTask('e2', 'Second', false)]);
+      enterEditMode('e1');
+      enterEditMode('e2'); // should be ignored
+      const editingItems = document.querySelectorAll('#task-list .task-item.editing');
+      assert(editingItems.length === 1, 'enterEditMode allows only one task in edit mode at a time');
+      assert(editingItems[0].getAttribute('data-id') === 'e1', 'enterEditMode keeps first task in edit mode when second call is ignored');
+    }
+    {
+      // unknown id is a no-op
+      resetState([makeTask('e1', 'Hello', false)]);
+      enterEditMode('nonexistent'); // should not throw
+      const editing = document.querySelectorAll('#task-list .task-item.editing');
+      assert(editing.length === 0, 'enterEditMode is no-op for unknown id');
+    }
+
+    // ── saveEdit ─────────────────────────────────────────────────────────────
+    section('Unit tests — saveEdit (Requirements 4.5)');
+
+    {
+      // valid new value → updates description
+      resetState([makeTask('s1', 'Original', false)]);
+      enterEditMode('s1');
+      saveEdit('s1', 'Updated description');
+      assert(tasks[0].description === 'Updated description', 'saveEdit updates task description');
+    }
+    {
+      // saves to localStorage
+      resetState([makeTask('s1', 'Original', false)]);
+      enterEditMode('s1');
+      saveEdit('s1', 'Persisted');
+      const loaded = loadTasks();
+      assert(loaded[0].description === 'Persisted', 'saveEdit persists updated description to localStorage');
+    }
+    {
+      // trims the saved value
+      resetState([makeTask('s1', 'Original', false)]);
+      enterEditMode('s1');
+      saveEdit('s1', '  Trimmed  ');
+      assert(tasks[0].description === 'Trimmed', 'saveEdit stores trimmed description');
+    }
+    {
+      // blank value → cancelEdit (description unchanged)
+      resetState([makeTask('s1', 'Keep this', false)]);
+      enterEditMode('s1');
+      saveEdit('s1', '   ');
+      assert(tasks[0].description === 'Keep this', 'saveEdit with whitespace-only value calls cancelEdit and preserves original description');
+    }
+    {
+      // blank value → normal view restored in DOM (no edit input)
+      resetState([makeTask('s1', 'Keep this', false)]);
+      enterEditMode('s1');
+      saveEdit('s1', '');
+      const editInput = document.querySelector('#task-list .task-edit-input');
+      assert(!editInput, 'saveEdit with empty value exits edit mode (removes edit input from DOM)');
+    }
+    {
+      // re-renders task list (edit controls gone after valid save)
+      resetState([makeTask('s1', 'Original', false)]);
+      enterEditMode('s1');
+      saveEdit('s1', 'New text');
+      const editInput = document.querySelector('#task-list .task-edit-input');
+      assert(!editInput, 'saveEdit re-renders task list removing edit controls after successful save');
+    }
+
+    // ── cancelEdit ───────────────────────────────────────────────────────────
+    section('Unit tests — cancelEdit (Requirements 4.6)');
+
+    {
+      // discards edit DOM — reverts to normal view
+      resetState([makeTask('c1', 'Stay same', false)]);
+      enterEditMode('c1');
+      cancelEdit('c1');
+      const editInput = document.querySelector('#task-list .task-edit-input');
+      assert(!editInput, 'cancelEdit removes edit input from DOM');
+    }
+    {
+      // description in array is unchanged
+      resetState([makeTask('c1', 'Stay same', false)]);
+      enterEditMode('c1');
+      cancelEdit('c1');
+      assert(tasks[0].description === 'Stay same', 'cancelEdit does not modify task description');
+    }
+    {
+      // normal task structure restored
+      resetState([makeTask('c1', 'Stay same', false)]);
+      enterEditMode('c1');
+      cancelEdit('c1');
+      const li = document.querySelector('#task-list .task-item[data-id="c1"]');
+      assert(li && !li.classList.contains('editing'), 'cancelEdit re-renders removing editing class');
+      assert(!!li.querySelector('.task-description'), 'cancelEdit restores .task-description span');
+      assert(!!li.querySelector('.task-edit-btn'), 'cancelEdit restores .task-edit-btn button');
+    }
+
+    // ── deleteTask ───────────────────────────────────────────────────────────
+    section('Unit tests — deleteTask (Requirements 5.3, 5.4)');
+
+    {
+      // removes from array
+      resetState([makeTask('d1', 'Remove me', false)]);
+      deleteTask('d1');
+      assert(tasks.length === 0, 'deleteTask removes task from array');
+    }
+    {
+      // persists removal to localStorage
+      resetState([makeTask('d1', 'Remove me', false)]);
+      deleteTask('d1');
+      const loaded = loadTasks();
+      assert(loaded.length === 0, 'deleteTask persists removal to localStorage');
+    }
+    {
+      // removes from DOM
+      resetState([makeTask('d1', 'Remove me', false)]);
+      deleteTask('d1');
+      const li = document.querySelector('#task-list .task-item[data-id="d1"]');
+      assert(!li, 'deleteTask removes task <li> from DOM');
+    }
+    {
+      // only deletes the target task
+      resetState([
+        makeTask('d1', 'Remove me', false),
+        makeTask('d2', 'Keep me', false),
+      ]);
+      deleteTask('d1');
+      assert(tasks.length === 1 && tasks[0].id === 'd2', 'deleteTask only removes the targeted task');
+    }
+    {
+      // unknown id is a no-op
+      resetState([makeTask('d1', 'Keep me', false)]);
+      deleteTask('nonexistent');
+      assert(tasks.length === 1, 'deleteTask is no-op for unknown id');
+    }
+    {
+      // id no longer present after delete
+      resetState([makeTask('d1', 'Remove me', false), makeTask('d2', 'Keep me', false)]);
+      deleteTask('d1');
+      const ids = tasks.map(t => t.id);
+      assert(!ids.includes('d1'), 'deleteTask: deleted id is absent from tasks array');
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // PROPERTY-BASED TESTS
+    // ════════════════════════════════════════════════════════════════════════
+
+    // Arbitraries
+    const idArb = fc.uuid();
+    const descriptionArb = fc.string({ minLength: 1, maxLength: 500 })
+      .map(s => s.trim())
+      .filter(s => s.length >= 1);
+    const taskArb = fc.record({
+      id: idArb,
+      description: descriptionArb,
+      completed: fc.boolean(),
+    });
+    const nonEmptyTasksArb = fc.array(taskArb, { minLength: 1, maxLength: 20 });
+
+    // ── Property 8: Toggle is an involution ──────────────────────────────────
+    section('Property 8 — Toggle is an involution (Requirements 5.1, 5.2)');
+    // Feature: todo-list-life-dashboard, Property 8: Completion toggle is an involution
+    // Validates: Requirements 5.1, 5.2
+
+    await runProperty(
+      'toggleTask twice returns task to original completed value',
+      fc.property(
+        taskArb,
+        (t) => {
+          const original = t.completed;
+          resetState([{ ...t }]);
+          toggleTask(t.id);
+          toggleTask(t.id);
+          return tasks[0].completed === original;
+        }
+      )
+    );
+
+    await runProperty(
+      'toggleTask once always flips the completed flag',
+      fc.property(
+        taskArb,
+        (t) => {
+          resetState([{ ...t }]);
+          toggleTask(t.id);
+          return tasks[0].completed === !t.completed;
+        }
+      )
+    );
+
+    await runProperty(
+      'toggleTask re-renders: DOM completed class matches tasks array state',
+      fc.property(
+        taskArb,
+        (t) => {
+          resetState([{ ...t }]);
+          toggleTask(t.id);
+          const li = document.querySelector('#task-list .task-item[data-id="' + t.id + '"]');
+          if (!li) return false;
+          return li.classList.contains('completed') === tasks[0].completed;
+        }
+      )
+    );
+
+    // ── Property 9: deleteTask removes exactly one entry ─────────────────────
+    section('Property 9 — deleteTask removes exactly one entry (Requirements 5.3)');
+    // Feature: todo-list-life-dashboard, Property 9: Task deletion removes exactly one entry
+    // Validates: Requirements 5.3
+
+    await runProperty(
+      'deleteTask on existing id decreases array length by exactly 1',
+      fc.property(
+        nonEmptyTasksArb,
+        fc.integer({ min: 0, max: 19 }),
+        (taskList, indexSeed) => {
+          // pick a valid index
+          const idx = indexSeed % taskList.length;
+          resetState(taskList.map(t => ({ ...t })));
+          const beforeLength = tasks.length;
+          const targetId = tasks[idx].id;
+          deleteTask(targetId);
+          return tasks.length === beforeLength - 1;
+        }
+      )
+    );
+
+    await runProperty(
+      'deleteTask: deleted id is absent from tasks array after deletion',
+      fc.property(
+        nonEmptyTasksArb,
+        fc.integer({ min: 0, max: 19 }),
+        (taskList, indexSeed) => {
+          const idx = indexSeed % taskList.length;
+          resetState(taskList.map(t => ({ ...t })));
+          const targetId = tasks[idx].id;
+          deleteTask(targetId);
+          return !tasks.some(t => t.id === targetId);
+        }
+      )
+    );
+
+    await runProperty(
+      'deleteTask: deleted id is absent from localStorage after deletion',
+      fc.property(
+        nonEmptyTasksArb,
+        fc.integer({ min: 0, max: 19 }),
+        (taskList, indexSeed) => {
+          const idx = indexSeed % taskList.length;
+          resetState(taskList.map(t => ({ ...t })));
+          const targetId = tasks[idx].id;
+          deleteTask(targetId);
+          const persisted = loadTasks();
+          return !persisted.some(t => t.id === targetId);
+        }
+      )
+    );
+
+    await runProperty(
+      'deleteTask leaves all other tasks intact (ids, descriptions, completed unchanged)',
+      fc.property(
+        nonEmptyTasksArb,
+        fc.integer({ min: 0, max: 19 }),
+        (taskList, indexSeed) => {
+          const idx = indexSeed % taskList.length;
+          resetState(taskList.map(t => ({ ...t })));
+          const targetId = tasks[idx].id;
+          const others = tasks.filter(t => t.id !== targetId).map(t => ({ ...t }));
+          deleteTask(targetId);
+          if (tasks.length !== others.length) return false;
+          for (let i = 0; i < others.length; i++) {
+            if (tasks[i].id !== others[i].id) return false;
+            if (tasks[i].description !== others[i].description) return false;
+            if (tasks[i].completed !== others[i].completed) return false;
+          }
+          return true;
+        }
+      )
+    );
+
+    // ── Edit mode: saveEdit validity property ────────────────────────────────
+    section('Property — saveEdit accepts all non-blank descriptions (Requirements 4.5)');
+    // Validates: Requirements 4.5
+
+    await runProperty(
+      'saveEdit stores trimmed non-blank description in tasks array',
+      fc.property(
+        taskArb,
+        descriptionArb,
+        (t, newDesc) => {
+          resetState([{ ...t }]);
+          enterEditMode(t.id);
+          saveEdit(t.id, newDesc);
+          return tasks[0].description === newDesc.trim();
+        }
+      )
+    );
+
+    await runProperty(
+      'saveEdit with whitespace-only value does not change description',
+      fc.property(
+        taskArb,
+        fc.stringMatching(/^\s+$/),
+        (t, blankDesc) => {
+          resetState([{ ...t }]);
+          enterEditMode(t.id);
+          const originalDesc = t.description;
+          saveEdit(t.id, blankDesc);
+          return tasks[0].description === originalDesc;
+        }
+      )
+    );
+
+    // ── Summary ──────────────────────────────────────────────────────────────
+    localStorage.removeItem(TASKS_KEY); // clean up
+
+    const total = passed + failed;
+    const cls   = failed === 0 ? 'all-pass' : 'has-fail';
+    const icon  = failed === 0 ? '✓' : '✗';
+    summary.innerHTML = `
+      <div class="${cls}">
+        ${icon} ${passed} / ${total} tests passed
+        ${failed > 0 ? `<br><strong>${failed} test(s) failed — see details above.</strong>` : ''}
+      </div>`;
+
+    console.log(`[PBT] ${passed}/${total} passed, ${failed} failed`);
+    if (failed > 0) {
+      console.error('[PBT] Some tests FAILED — see output above.');
+    }
+  </script>
+</body>
+</html>
